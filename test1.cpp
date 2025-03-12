@@ -97,12 +97,12 @@ void applicaEffettiSpeciali(const vector<StatoRisorsa>& risorseAttive, Turno &tu
         // Effect E (Accumulator) capacity is updated in simulaTurno. Effect E surplus usage is in profit calculation.
     }
 
-    turno.TM = max(0, (int)floor(turno.TM_base * TM_multiplier));
-    turno.TX = max(0, (int)floor(turno.TX_base * TX_multiplier));
-    turno.TR = max(0, (int)floor(turno.TR_base * TR_multiplier));
+    turno.TM = max(0, (int)round(turno.TM_base * TM_multiplier)); // Use round for correct integer conversion
+    turno.TX = max(0, (int)round(turno.TX_base * TX_multiplier)); // Use round for correct integer conversion
+    turno.TR = max(0, (int)round(turno.TR_base * TR_multiplier)); // Use round for correct integer conversion
 
     for (int i = 0; i < RU_list.size(); ++i) {
-        RU_list[i] = max(0, (int)floor(RU_list[i] * RU_multiplier_A_green * RU_multiplier_A_nongreen));
+        RU_list[i] = max(0, (int)round(RU_list[i] * RU_multiplier_A_green * RU_multiplier_A_nongreen)); // Use round
     }
 }
 
@@ -111,7 +111,6 @@ void applicaEffettiSpeciali(const vector<StatoRisorsa>& risorseAttive, Turno &tu
 int calcolaProfitto(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAttive, vector<Risorsa>& risorseDisponibili) {
     int edificiAlimentati = 0;
     vector<int> RU_list_active_resources;
-    vector<int> accumulator_indices;
 
     for (size_t i = 0; i < risorseAttive.size(); ++i) {
         if (risorseAttive[i].attiva) {
@@ -130,20 +129,18 @@ int calcolaProfitto(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseA
     }
 
     int profitto = 0;
-    
+
     if (edificiAlimentati < turno.TM){
         int deficit = turno.TM - edificiAlimentati;
         if(deficit <= globalBattery.surplusGained){
             edificiAlimentati += deficit;
             globalBattery.surplusGained-=deficit;
-            profitto = min(edificiAlimentati, turno.TX) * turno.TR;
         }
-    }else{
-        profitto = min(edificiAlimentati, turno.TX) * turno.TR;
     }
+    profitto = max(0, min(edificiAlimentati, turno.TX) * turno.TR); // Ensure profit is not negative
 
     // Accumulate surplus for type E resources
-    if (edificiAlimentati > turno.TX) { // Only accumulate if profit is generated (TM is met)
+    if (edificiAlimentati > turno.TX) { // Only accumulate if profit is generated (TM is met or exceeded)
         int surplusGained = edificiAlimentati - turno.TX;
         if (globalBattery.surplusGained + surplusGained > globalBattery.capacity){
             globalBattery.surplusGained = globalBattery.capacity;
@@ -202,9 +199,9 @@ void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAtti
                     for(const auto& active_res : risorseAttive) {
                         if(active_res.attiva && active_res.risorsa.RT == 'C') {
                             if (active_res.risorsa.RE >= 0) { // Green
-                                nuovaRisorsaStato.rl_modificato = max(1, (int)floor(nuovaRisorsaStato.rl_modificato * (1.0 + (double)active_res.risorsa.RE / 100.0)));
+                                nuovaRisorsaStato.rl_modificato = max(1, (int)round(nuovaRisorsaStato.rl_modificato * (1.0 + (double)active_res.risorsa.RE / 100.0)));
                             } else { // Non-Green
-                                nuovaRisorsaStato.rl_modificato = max(1, (int)floor(nuovaRisorsaStato.rl_modificato * (1.0 - (double)abs(active_res.risorsa.RE) / 100.0)));
+                                nuovaRisorsaStato.rl_modificato = max(1, (int)round(nuovaRisorsaStato.rl_modificato * (1.0 - (double)abs(active_res.risorsa.RE) / 100.0)));
                             }
                             nuovaRisorsaStato.cicloVitaRimanente = nuovaRisorsaStato.rl_modificato; //update remaining life too.
                             break; // Assuming only one active C type resource influences purchase.
@@ -322,7 +319,7 @@ void simulaGioco(int budgetIniziale, const vector<Turno>& turni, vector<Risorsa>
 }
 
 int main() {
-    ifstream inputFile("0-demo.txt"); // File di input
+    ifstream inputFile("input.txt"); // File di input
     if (!inputFile) {
         cerr << "Errore nell'apertura del file!" << endl;
         return 1;
