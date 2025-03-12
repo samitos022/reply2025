@@ -10,6 +10,16 @@ using namespace std;
 // Global budget variable
 int budget;
 
+// Global Battery structure
+struct Battery {
+    int surplusGained;
+    int capacity;
+
+    Battery() : surplusGained(0), capacity(0) {}
+};
+
+Battery globalBattery;
+
 // Struttura per rappresentare una risorsa
 struct Risorsa {
     int RI;  // Identificativo risorsa
@@ -20,7 +30,7 @@ struct Risorsa {
     int RL;  // Ciclo di vita totale (inclusi attivi e downtime)
     int RU;  // Numero di edifici alimentati per turno attivo
     char RT; // Tipo effetto speciale (A, B, C, D, E, X)
-    int RE;  // Parametro dell’effetto speciale (se presente)
+    int RE;  // Parametro dell’effetto speciale (se presente), for E type it is capacity
 };
 
 // Struttura per rappresentare un turno
@@ -39,7 +49,7 @@ struct StatoRisorsa {
     int turniRimanenti;      // Turni rimanenti nell'attuale stato (attivo o downtime)
     int cicloVitaRimanente;  // Turni rimanenti del ciclo di vita totale
     bool attiva;             // true se la risorsa è attualmente attiva
-    int accumulatore;        // Per risorse di tipo E (accumulatore), surplus memorizzato
+    int accumulatore;        // Per risorse di tipo E (accumulatore), surplus memorizzato (not used anymore)
     int rl_modificato;      // RL modificato da effetto C
 };
 
@@ -84,7 +94,7 @@ void applicaEffettiSpeciali(const vector<StatoRisorsa>& risorseAttive, Turno &tu
             }
         }
         // Effect C is handled at resource purchase time, no dynamic effect here.
-        // Effect E (Accumulator) does not directly modify TM, TX, TR, RU here, its effect is in profit calculation.
+        // Effect E (Accumulator) capacity is updated in simulaTurno. Effect E surplus usage is in profit calculation.
     }
 
     turno.TM = max(0, (int)floor(turno.TM_base * TM_multiplier));
@@ -106,9 +116,6 @@ int calcolaProfitto(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseA
     for (size_t i = 0; i < risorseAttive.size(); ++i) {
         if (risorseAttive[i].attiva) {
             RU_list_active_resources.push_back(risorseAttive[i].risorsa.RU);
-            if (risorseAttive[i].risorsa.RT == 'E') {
-                accumulator_indices.push_back(i);
-            }
         }
     }
 
@@ -123,33 +130,26 @@ int calcolaProfitto(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseA
     }
 
     int profitto = 0;
-    if (edificiAlimentati >= turno.TM) {
-        profitto = min(edificiAlimentati, turno.TX) * turno.TR;
-    } else {
-        // Try to use accumulator surplus if available and applicable
-        for (int index : accumulator_indices) {
-            if (risorseAttive[index].attiva && edificiAlimentati < turno.TM) {
-                int deficit = turno.TM - edificiAlimentati;
-                int surplus_to_use = min(deficit, risorseAttive[index].accumulatore);
-                if (surplus_to_use > 0) {
-                    edificiAlimentati += surplus_to_use;
-                    risorseAttive[index].accumulatore -= surplus_to_use;
-                    if (edificiAlimentati >= turno.TM) {
-                        profitto = min(edificiAlimentati, turno.TX) * turno.TR;
-                        break; // Used accumulator to meet TM, calculate profit and exit accumulator loop
-                    }
-                }
-            }
+    
+    if (edificiAlimentati < turno.TM){
+        int deficit = turno.TM - edificiAlimentati;
+        if(deficit <= globalBattery.surplusGained){
+            edificiAlimentati += deficit;
+            globalBattery.surplusGained-=deficit;
+            profitto = min(edificiAlimentati, turno.TX) * turno.TR;
         }
+    }else{
+        profitto = min(edificiAlimentati, turno.TX) * turno.TR;
     }
 
     // Accumulate surplus for type E resources
-    if (profitto > 0) { // Only accumulate if profit is generated (TM is met)
-        for (int index : accumulator_indices) {
-             if (risorseAttive[index].attiva) {
-                int surplus_this_turn = max(0, edificiAlimentati - turno.TX); // Surplus beyond TX
-                risorseAttive[index].accumulatore += surplus_this_turn;
-             }
+    if (edificiAlimentati > turno.TX) { // Only accumulate if profit is generated (TM is met)
+        int surplusGained = edificiAlimentati - turno.TX;
+        if (globalBattery.surplusGained + surplusGained > globalBattery.capacity){
+            globalBattery.surplusGained = globalBattery.capacity;
+        }
+        else {
+            globalBattery.surplusGained += surplusGained;
         }
     }
 
@@ -161,11 +161,12 @@ int calcolaProfitto(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseA
 void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAttive, vector<Risorsa>& risorseDisponibili, ofstream& outputFile) {
     cout << "\nTurno " << turnoIndex << ":\n";
     cout << "Budget disponibile: " << budget << "\n";
+    cout << "Battery Surplus: " << globalBattery.surplusGained << ", Capacity: " << globalBattery.capacity << "\n";
+
 
     turno.TM = turno.TM_base; // Reset TM, TX, TR for effects in each turn
     turno.TX = turno.TX_base;
     turno.TR = turno.TR_base;
-
 
     // 1. Acquisto risorse (Esempio di acquisto fisso per testing output)
     vector<int> risorseAcquistateIds;
@@ -177,7 +178,7 @@ void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAtti
     } else if (turnoIndex == 2) {
         risorseAcquistateIds = {2};
     } else if (turnoIndex == 4) {
-        risorseAcquistateIds = {2, 2, 2};
+        risorseAcquistateIds = {2, 2};
     } else if (turnoIndex == 5) {
         risorseAcquistateIds = {2};
     }
@@ -194,7 +195,7 @@ void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAtti
                     nuovaRisorsaStato.turniRimanenti = nuovaRisorsaStato.risorsa.RW;
                     nuovaRisorsaStato.cicloVitaRimanente = nuovaRisorsaStato.risorsa.RL;
                     nuovaRisorsaStato.attiva = true;
-                    nuovaRisorsaStato.accumulatore = 0;
+                    nuovaRisorsaStato.accumulatore = 0; // Not used anymore
                     nuovaRisorsaStato.rl_modificato = nuovaRisorsaStato.risorsa.RL;
 
                     //Effect C - modify RL at purchase time if a type C resource is active
@@ -216,6 +217,14 @@ void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAtti
                     cout << "Budget insufficient to buy resource " << id << endl;
                 }
             }
+        }
+    }
+
+    // Update Battery capacity at the start of each turn based on active E resources
+    globalBattery.capacity = 0;
+    for (const auto &stato : risorseAttive) {
+        if (stato.attiva && stato.risorsa.RT == 'E') {
+            globalBattery.capacity += stato.risorsa.RE;
         }
     }
 
@@ -270,8 +279,10 @@ void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAtti
         it->cicloVitaRimanente--;
         if (it->cicloVitaRimanente <= 0) {
             if (it->risorsa.RT == 'E') {
-                it->accumulatore = 0; // Lose stored buildings at end of life
-                //TODO: Transfer to other accumulators if needed (complex logic not implemented yet)
+                // globalBattery.surplusGained = 0; // Do not reset global surplus when one E resource dies.
+                globalBattery.capacity -= it->risorsa.RE; // Reduce capacity
+                globalBattery.capacity = max(0, globalBattery.capacity); // Ensure capacity is not negative
+                globalBattery.surplusGained = min(globalBattery.surplusGained, globalBattery.capacity); // Cap surplus again.
             }
             it = risorseAttive.erase(it); // Resource becomes obsolete and is removed
             continue; // Skip to next resource after erase
@@ -296,6 +307,7 @@ void simulaTurno(int turnoIndex, Turno &turno, vector<StatoRisorsa>& risorseAtti
 // Funzione che gestisce l'intera simulazione del gioco
 void simulaGioco(int budgetIniziale, const vector<Turno>& turni, vector<Risorsa>& risorseDisponibili, ofstream& outputFile) {
     budget = budgetIniziale; // Initialize global budget
+    globalBattery = Battery(); // Initialize global battery
 
     // Stato delle risorse acquistate (inizialmente vuoto)
     vector<StatoRisorsa> risorseAttive;
@@ -306,6 +318,7 @@ void simulaGioco(int budgetIniziale, const vector<Turno>& turni, vector<Risorsa>
     }
 
     cout << "\nSimulazione terminata. Budget finale: " << budget << "\n";
+    cout << "Surplus finale in batteria: " << globalBattery.surplusGained << "\n";
 }
 
 int main() {
@@ -341,7 +354,7 @@ int main() {
     // Lettura dei turni
     vector<Turno> turni(T);
     for (int i = 0; i < T; ++i) {
-        turni[i].TM_base >> turni[i].TX_base >> turni[i].TR_base;
+        inputFile >> turni[i].TM_base >> turni[i].TX_base >> turni[i].TR_base;
         turni[i].TM = turni[i].TM_base;
         turni[i].TX = turni[i].TX_base;
         turni[i].TR = turni[i].TR_base;
